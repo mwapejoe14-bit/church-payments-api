@@ -4,7 +4,6 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import PasswordReset from "../models/PasswordReset.js";
 
-// Generate JWT Token
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: "30d",
@@ -16,9 +15,8 @@ const generateToken = (id, role) => {
 // @access  Public
 export const registerUser = async (req, res) => {
   try {
-    const { name, email, phone, password, role } = req.body;
+    const { name, email, phone, password, role, memberType } = req.body;
 
-    // Check if user already exists
     const userExists = await User.findOne({ $or: [{ email }, { phone }] });
     if (userExists) {
       return res.status(400).json({
@@ -27,17 +25,16 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
     const user = await User.create({
       name,
       email,
       phone,
       password: hashedPassword,
       role: role || "user",
+      memberType: memberType || "both",
     });
 
     res.status(201).json({
@@ -49,6 +46,8 @@ export const registerUser = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        memberType: user.memberType,
+        approvalStatus: user.approvalStatus || "approved",
         token: generateToken(user._id, user.role),
       },
     });
@@ -69,7 +68,6 @@ export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({
@@ -78,12 +76,18 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    // Check password
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
+      });
+    }
+
+    if (user.approvalStatus === "rejected") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been rejected. Please contact admin.",
       });
     }
 
@@ -96,6 +100,8 @@ export const loginUser = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        memberType: user.memberType || "both",
+        approvalStatus: user.approvalStatus || "approved",
         token: generateToken(user._id, user.role),
       },
     });
@@ -109,10 +115,6 @@ export const loginUser = async (req, res) => {
   }
 };
 
-// ============================================
-// PASSWORD RESET FUNCTIONS (ADD THESE)
-// ============================================
-
 // @desc    Request password reset
 // @route   POST /api/auth/forgot-password
 // @access  Public
@@ -120,7 +122,6 @@ export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
 
-    // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({
@@ -129,35 +130,28 @@ export const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(20).toString("hex");
 
-    // Save token to database
     await PasswordReset.create({
       email: user.email,
       token: resetToken,
     });
 
-    // Also save to user model (for backward compatibility)
     user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+    user.resetPasswordExpires = Date.now() + 3600000;
     await user.save();
 
-    // Build reset link (frontend URL)
-    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password/${resetToken}`;
+    const resetUrl = `${
+      process.env.FRONTEND_URL || "http://localhost:5173"
+    }/reset-password/${resetToken}`;
 
-    // TODO: Send email with reset link (nodemailer will be added later)
-    console.log(`🔐 Reset link (copy this to test): ${resetUrl}`);
+    console.log(`Password reset link for ${user.email}: ${resetUrl}`);
 
     res.status(200).json({
       success: true,
-      message: "Password reset link generated. Check your email.",
-      data: {
-        token: resetToken,
-        resetUrl: resetUrl,
-      },
+      message: "Password reset link sent to your email",
+      data: { resetUrl },
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -168,87 +162,19 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// @desc    Reset password using token
-// @route   POST /api/auth/reset-password/:token
-// @access  Public
-export const resetPassword = async (req, res) => {
-  try {
-    const { token } = req.params;
-    const { newPassword } = req.body;
-
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters",
-      });
-    }
-
-    // Find valid token
-    const resetEntry = await PasswordReset.findOne({
-      token: token,
-      used: false,
-      expiresAt: { $gt: new Date() },
-    });
-
-    if (!resetEntry) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired reset token",
-      });
-    }
-
-    // Find user by email
-    const user = await User.findOne({ email: resetEntry.email });
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    // Update user password
-    user.password = hashedPassword;
-    user.resetPasswordToken = null;
-    user.resetPasswordExpires = null;
-    await user.save();
-
-    // Mark token as used
-    resetEntry.used = true;
-    await resetEntry.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Password reset successful. Please login with your new password.",
-    });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Verify reset token (for frontend validation)
+// @desc    Verify reset token
 // @route   GET /api/auth/verify-reset-token/:token
 // @access  Public
 export const verifyResetToken = async (req, res) => {
   try {
     const { token } = req.params;
 
-    const resetEntry = await PasswordReset.findOne({
-      token: token,
-      used: false,
-      expiresAt: { $gt: new Date() },
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() },
     });
 
-    if (!resetEntry) {
+    if (!user) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired reset token",
@@ -258,16 +184,61 @@ export const verifyResetToken = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Token is valid",
-      data: {
-        email: resetEntry.email,
-      },
+      data: { email: user.email },
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Reset password with token
+// @route   POST /api/auth/reset-password/:token
+// @access  Public
+export const resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset token",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Password reset successful. You can now login.",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
     });
   }
 };

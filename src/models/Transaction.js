@@ -12,10 +12,44 @@ const transactionSchema = new mongoose.Schema(
       required: [true, "Amount is required"],
       min: [1, "Amount must be at least 1"],
     },
+    // Extended type — church + PTA fee types
     type: {
       type: String,
-      enum: ["tithe", "offering", "pta"],
+      enum: [
+        "tithe",
+        "offering",
+        "special",
+        "school",
+        "uniform",
+        "lunch",
+        "bus",
+      ],
       required: true,
+    },
+    // For church vs pta routing
+    category: {
+      type: String,
+      enum: ["church", "pta"],
+      required: true,
+    },
+    // For PTA transactions
+    childId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Child",
+      default: null,
+    },
+    batchId: {
+      type: String,
+      default: null,
+    },
+    term: {
+      type: String,
+      enum: ["term1", "term2", "term3", null],
+      default: null,
+    },
+    year: {
+      type: Number,
+      default: null,
     },
     provider: {
       type: String,
@@ -36,9 +70,7 @@ const transactionSchema = new mongoose.Schema(
       unique: true,
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 const Transaction = mongoose.model("Transaction", transactionSchema);

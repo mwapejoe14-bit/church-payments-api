@@ -29,18 +29,31 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin"],
       default: "user",
     },
-    resetPasswordToken: {
+    memberType: {
       type: String,
+      enum: ["church", "pta", "both"],
+      default: "both",
+    },
+    preferredProvider: {
+      type: String,
+      enum: ["MTN", "Airtel", "Zamtel", null],
       default: null,
     },
-    resetPasswordExpires: {
-      type: Date,
-      default: null,
+    approvalStatus: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "approved", // existing users stay approved
     },
+    childrenIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Child",
+      },
+    ],
+    resetPasswordToken: { type: String, default: null },
+    resetPasswordExpires: { type: Date, default: null },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 const User = mongoose.model("User", userSchema);
